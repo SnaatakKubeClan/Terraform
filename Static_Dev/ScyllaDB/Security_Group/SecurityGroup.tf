@@ -7,12 +7,27 @@ terraform {
       version = "~> 5.0"
     }
   }
+
+  backend "s3" {
+    bucket       = "otms-dev-tfstate"
+    key          = "dev/terraform.tfstate"
+    region       = "ap-south-1"
+    encrypt      = true
+    use_lockfile = true
+  }
+}
+
+data "aws_vpc" "main" {
+  filter {
+    name   = "tag:Name"
+    values = ["ot-ms-dev-vpc"]
+  }
 }
 
 resource "aws_security_group" "db" {
   name        = "OTMS-dev-scylladb-sg"
   description = "Syclla DB security group"
-  vpc_id      = "vpc-05cf390db8606ec80"
+  vpc_id      = data.aws_vpc.main.id
 
   ingress {
     description     = "Syclla DB port from app security groups only"
