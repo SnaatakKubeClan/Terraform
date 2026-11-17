@@ -1,77 +1,129 @@
 
-# Attendance Dev EC2 Instance
-# Ticket: SCRUM-438
+# Ticket: Attendance - Instance
+# One dev EC2 in private-app-a running the container.
+# SSM access, IMDSv2 and encrypted disk.
 
-terraform {
-  required_version = ">= 1.5.0"
-
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
+# Fetch existing VPC
+data "aws_vpc" "main" {
+  filter {
+    name   = "tag:Name"
+    values = ["ot-ms-dev-vpc"]
   }
 }
 
-# AWS Provider
-provider "aws" {
-  region = "ap-south-1"
-}
-
-# Fetch existing Attendance Security Group
-data "aws_security_group" "attendance" {
-  id = "sg-0b4d540a8017c15b6"
-}
-
-# Fetch existing Attendance Backend Subnet
-data "aws_subnet" "backend" {
+# Fetch existing private application subnet
+data "aws_subnet" "private_app_a" {
   filter {
     name   = "tag:Name"
-    values = ["dev-otms-backend"]
+    values = ["ot-ms-dev-private-app-a"]
   }
 
   filter {
     name   = "vpc-id"
-    values = ["vpc-043631a3468dae621"]
+    values = [data.aws_vpc.main.id]
   }
 }
 
-# Fetch latest Ubuntu 24.04 LTS AMI
-data "aws_ami" "ubuntu" {
-  most_recent = true
-  owners      = ["099720109477"]
+# Fetch existing Attendance Security Group
+data "aws_security_group" "app" {
+  name   = "ot-ms-dev-attendance-sg"
+  vpc_id = data.aws_vpc.main.id
+}
 
-  filter {
-    name   = "name"
-    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"]
+# Fetch latest Amazon Linux 2023 AMI
+data "aws_ssm_parameter" "ami" {
+  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+}
+
+# IAM role for EC2 SSM access
+resource "aws_iam_role" "this" {
+  name = "ot-ms-dev-attendance-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = "sts:AssumeRole"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+    }]
+  })
+
+  tags = {
+    Name        = "ot-ms-dev-attendance-role"
+    Application = "attendance"
+    Owner       = "Shivam"
+    Environment = "dev"
+    CostCenter  = "CC-OT-DEV-1001"
   }
+}
 
-  filter {
-    name   = "architecture"
-    values = ["x86_64"]
-  }
+# Attach AWS managed SSM policy
+resource "aws_iam_role_policy_attachment" "ssm" {
+  role       = aws_iam_role.this.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
 
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
+# EC2 Instance Profile
+resource "aws_iam_instance_profile" "this" {
+  name = "ot-ms-dev-attendance-instance-profile"
+  role = aws_iam_role.this.name
 
-  filter {
-    name   = "root-device-type"
-    values = ["ebs"]
+  tags = {
+    Name        = "ot-ms-dev-attendance-instance-profile"
+    Application = "attendance"
+    Owner       = "Shivam"
+    Environment = "dev"
+    CostCenter  = "CC-OT-DEV-1001"
   }
 }
 
 # Attendance EC2 Instance
-resource "aws_instance" "attendance" {
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = "t3.micro"
-  subnet_id              = data.aws_subnet.backend.id
-  vpc_security_group_ids = [data.aws_security_group.attendance.id]
+resource "aws_instance" "main" {
+  ami                    = data.aws_ssm_parameter.ami.value
+  instance_type          = "t3.small"
+  subnet_id              = data.aws_subnet.private_app_a.id
+  vpc_security_group_ids = [data.aws_security_group.app.id]
+
+  # Existing SSH key pair created by Anshul
+  key_name = "ot-ms-dev-key"
+
+  iam_instance_profile = aws_iam_instance_profile.this.name
+
+  # Install Docker and run Attendance API
+  user_data = <<-EOT
+    #!/bin/bash
+    set -euo pipefail
+
+    dnf install -y docker
+    systemctl enable --now docker
+
+    docker run -d \
+      --name attendance \
+      --restart always \
+      -p 8080:8080 \
+      quay.io/opstree/attendance-api:latest
+  EOT
+
+  user_data_replace_on_change = true
+
+  # Require IMDSv2
+  metadata_options {
+    http_tokens   = "required"
+    http_endpoint = "enabled"
+  }
+
+  # Encrypted root disk
+  root_block_device {
+    volume_type = "gp3"
+    volume_size = 20
+    encrypted   = true
+  }
 
   tags = {
-    Name        = "ot-ms-dev-attendance-ec2"
-    Application = "Attendance"
+    Name        = "ot-ms-dev-attendance-instance"
+    Application = "attendance"
     Owner       = "Shivam"
     Environment = "dev"
     CostCenter  = "CC-OT-DEV-1001"
@@ -80,22 +132,26 @@ resource "aws_instance" "attendance" {
   lifecycle {
     precondition {
       condition = (
-        data.aws_subnet.backend.vpc_id ==
-        data.aws_security_group.attendance.vpc_id
+        data.aws_subnet.private_app_a.vpc_id ==
+        data.aws_security_group.app.vpc_id
       )
-      error_message = "Attendance Security Group and Subnet must belong to the same VPC."
+      error_message = "Attendance subnet and security group must belong to the same VPC."
     }
   }
 }
 
 # Outputs
-output "attendance_instance_id" {
+output "instance_id" {
   description = "Attendance EC2 Instance ID"
-  value       = aws_instance.attendance.id
+  value       = aws_instance.main.id
 }
 
-output "attendance_private_ip" {
+output "private_ip" {
   description = "Attendance EC2 Private IP"
-  value       = aws_instance.attendance.private_ip
+  value       = aws_instance.main.private_ip
 }
 
+output "instance_profile_name" {
+  description = "Attendance EC2 IAM Instance Profile"
+  value       = aws_iam_instance_profile.this.name
+}
