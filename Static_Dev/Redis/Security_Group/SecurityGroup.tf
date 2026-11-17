@@ -38,7 +38,7 @@ data "aws_security_group" "bastion" {
 
 # Redis Security Group
 resource "aws_security_group" "redis" {
-  name        = "dev-otms-redis-sg"
+  name        = "OTMS-dev-redis-sg"
   description = "Security Group for OTMS Redis"
   vpc_id      = data.aws_vpc.main.id
 
