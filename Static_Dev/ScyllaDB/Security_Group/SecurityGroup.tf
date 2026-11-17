@@ -10,7 +10,7 @@ terraform {
 
   backend "s3" {
     bucket       = "otms-dev-tfstate"
-    key          = "dev/terraform.tfstate"
+    key          = "dev/scylladb/terraform.tfstate"
     region       = "ap-south-1"
     encrypt      = true
     use_lockfile = true
@@ -22,6 +22,15 @@ data "aws_vpc" "main" {
     name   = "tag:Name"
     values = ["ot-ms-dev-vpc"]
   }
+}
+
+data "aws_security_group" "bastion" {
+  filter {
+    name   = "group-name"
+    values = ["ot-ms-dev-bastion-sg"]
+  }
+
+  vpc_id = data.aws_vpc.main.id
 }
 
 resource "aws_security_group" "db" {
@@ -36,6 +45,14 @@ resource "aws_security_group" "db" {
     protocol        = "tcp"
     cidr_blocks     = ["0.0.0.0/0"]
   }
+  
+  ingress {
+	  description     = "SSH from Bastion"
+	  from_port       = 22
+	  to_port         = 22
+	  protocol        = "tcp"
+	  security_groups = [data.aws_security_group.bastion.id]
+	}
 
    egress {
 	  description = "Allow all outbound traffic"
