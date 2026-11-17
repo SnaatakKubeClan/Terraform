@@ -2,6 +2,7 @@
 # Attendance EC2 Instance
 # Ticket: SCRUM-438
 
+# Fetch existing VPC
 data "aws_vpc" "main" {
   filter {
     name   = "tag:Name"
@@ -9,10 +10,11 @@ data "aws_vpc" "main" {
   }
 }
 
-data "aws_subnet" "private_app_a" {
+# Fetch existing Backend Subnet
+data "aws_subnet" "backend" {
   filter {
     name   = "tag:Name"
-    values = ["ot-ms-dev-private-app-a"]
+    values = ["dev-otms-backend"]
   }
 
   filter {
@@ -21,15 +23,18 @@ data "aws_subnet" "private_app_a" {
   }
 }
 
+# Fetch existing Attendance Security Group
 data "aws_security_group" "app" {
   name   = "ot-ms-dev-attendance-sg"
   vpc_id = data.aws_vpc.main.id
 }
 
+# Fetch latest Amazon Linux 2023 AMI
 data "aws_ssm_parameter" "ami" {
   name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 }
 
+# IAM Role for EC2
 resource "aws_iam_role" "this" {
   name = "ot-ms-dev-attendance-role"
 
@@ -53,11 +58,13 @@ resource "aws_iam_role" "this" {
   }
 }
 
+# Attach SSM Managed Policy
 resource "aws_iam_role_policy_attachment" "ssm" {
   role       = aws_iam_role.this.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+# EC2 Instance Profile
 resource "aws_iam_instance_profile" "this" {
   name = "ot-ms-dev-attendance-instance-profile"
   role = aws_iam_role.this.name
@@ -71,15 +78,17 @@ resource "aws_iam_instance_profile" "this" {
   }
 }
 
+# Attendance EC2 Instance
 resource "aws_instance" "main" {
   ami                    = data.aws_ssm_parameter.ami.value
   instance_type          = "t3.small"
-  subnet_id              = data.aws_subnet.private_app_a.id
+  subnet_id              = data.aws_subnet.backend.id
   vpc_security_group_ids = [data.aws_security_group.app.id]
 
   key_name             = "ot-ms-dev-key"
   iam_instance_profile = aws_iam_instance_profile.this.name
 
+  # Install Docker and run Attendance API
   user_data = <<-EOT
     #!/bin/bash
     set -euo pipefail
@@ -96,11 +105,13 @@ resource "aws_instance" "main" {
 
   user_data_replace_on_change = true
 
+  # Require IMDSv2
   metadata_options {
     http_tokens   = "required"
     http_endpoint = "enabled"
   }
 
+  # Encrypted root disk
   root_block_device {
     volume_type = "gp3"
     volume_size = 20
@@ -118,7 +129,7 @@ resource "aws_instance" "main" {
   lifecycle {
     precondition {
       condition = (
-        data.aws_subnet.private_app_a.vpc_id ==
+        data.aws_subnet.backend.vpc_id ==
         data.aws_security_group.app.vpc_id
       )
       error_message = "Attendance subnet and security group must belong to the same VPC."
@@ -126,10 +137,13 @@ resource "aws_instance" "main" {
   }
 }
 
+# Outputs
 output "instance_id" {
-  value = aws_instance.main.id
+  description = "Attendance EC2 Instance ID"
+  value       = aws_instance.main.id
 }
 
 output "private_ip" {
-  value = aws_instance.main.private_ip
+  description = "Attendance EC2 Private IP"
+  value       = aws_instance.main.private_ip
 }
