@@ -30,7 +30,7 @@ data "aws_vpc" "main" {
 
 resource "aws_lb_target_group" "main" {
   name                 = "ot-ms-dev-notification-tg"
-  port                 = 8080
+  port                 = 80
   protocol             = "HTTP"
   target_type          = "instance"
   vpc_id               = data.aws_vpc.main.id
