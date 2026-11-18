@@ -1,5 +1,5 @@
 # Ticket: Frontend - security group
-# Only the ALB can reach port 3000. Outbound: 80/443 (image pull) + data store ports.
+# Only the ALB can reach port 3000. Outbound: 80/443 (image pull) + data store ports
 
 data "aws_vpc" "main" {
   filter {
