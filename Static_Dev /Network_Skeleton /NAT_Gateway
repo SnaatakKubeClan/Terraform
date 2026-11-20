@@ -1,0 +1,25 @@
+# Elastic IP for NAT Gateway
+resource "aws_eip" "nat" {
+  domain = "vpc"
+
+  tags = {
+    Name = "OTMS-dev-network-natgateway-eip"
+  }
+}
+
+# NAT Gateway
+resource "aws_nat_gateway" "main" {
+  allocation_id = aws_eip.nat.id
+  subnet_id     = "subnet-0f57fc68cc9e52b37"
+
+  tags = {
+    Name = "OTMS-dev-network-natgateway"
+  }
+}
+
+# Update existing Private Route Table
+resource "aws_route" "private_default" {
+  route_table_id         = "rtb-0baeb5c19085a3082"
+  destination_cidr_block = "0.0.0.0/0"
+  nat_gateway_id         = aws_nat_gateway.main.id
+}
