@@ -11,7 +11,7 @@ terraform {
 }
 
 provider "aws" {
-  region  = "ap-south-1"
+  region = "ap-south-1"
 }
 
 # --------------------------------------------------
@@ -21,7 +21,7 @@ provider "aws" {
 variable "vpc_name" {
   description = "Name tag of the existing development VPC"
   type        = string
-  default     = "ot-ms-dev-vpc"
+  default     = "ot-ms-dev-vpc-palak"
 }
 
 variable "nat_gateway_name" {
