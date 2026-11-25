@@ -19,7 +19,7 @@ provider "aws" {
 # --------------------------------------------------
 
 variable "vpc_name" {
-  description = "Name tag of the existing development VPC"
+  description = "Name tag of the development VPC"
   type        = string
   default     = "ot-ms-dev-vpc"
 }
@@ -30,14 +30,45 @@ variable "nat_gateway_name" {
   default     = "ot-ms-dev-nat"
 }
 
-variable "private_route_table_name" {
-  description = "Name tag of the existing private route table"
+variable "public_route_table_name" {
+  description = "Name tag for the public route table"
   type        = string
-  default     = "OTMS-dev-network-private-rt"
+  default     = "dev-otms-public-rt"
+}
+
+variable "private_route_table_name" {
+  description = "Name tag for the private route table"
+  type        = string
+  default     = "dev-otms-private-rt"
+}
+
+variable "owner" {
+  description = "Owner of the route table configuration"
+  type        = string
+  default     = "Shivam"
+}
+
+variable "cost_center" {
+  description = "Development infrastructure cost center"
+  type        = string
+  default     = "CC-OT-DEV-1001"
 }
 
 # --------------------------------------------------
-# Existing VPC - Dynamic lookup by Name tag
+# Common Tags
+# --------------------------------------------------
+
+locals {
+  common_tags = {
+    Application = "network"
+    Owner       = var.owner
+    Environment = "dev"
+    CostCenter  = var.cost_center
+  }
+}
+
+# --------------------------------------------------
+# Existing VPC
 # --------------------------------------------------
 
 data "aws_vpc" "main" {
@@ -75,7 +106,75 @@ data "aws_nat_gateway" "main" {
 }
 
 # --------------------------------------------------
-# Existing Public Route Table (Main Route Table)
+# Existing Public Subnets
+# --------------------------------------------------
+
+data "aws_subnet" "public_a" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.main.id]
+  }
+
+  filter {
+    name   = "tag:Name"
+    values = ["ot-ms-dev-public-a"]
+  }
+}
+
+data "aws_subnet" "public_b" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.main.id]
+  }
+
+  filter {
+    name   = "tag:Name"
+    values = ["ot-ms-dev-public-b"]
+  }
+}
+
+# --------------------------------------------------
+# Existing Private Subnets
+# --------------------------------------------------
+
+data "aws_subnet" "frontend" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.main.id]
+  }
+
+  filter {
+    name   = "tag:Name"
+    values = ["dev-otms-frontend"]
+  }
+}
+
+data "aws_subnet" "backend" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.main.id]
+  }
+
+  filter {
+    name   = "tag:Name"
+    values = ["dev-otms-backend"]
+  }
+}
+
+data "aws_subnet" "database" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.main.id]
+  }
+
+  filter {
+    name   = "tag:Name"
+    values = ["dev-otms-database"]
+  }
+}
+
+# --------------------------------------------------
+# Existing Main Route Table (Public)
 # --------------------------------------------------
 
 data "aws_route_table" "public" {
@@ -90,30 +189,86 @@ data "aws_route_table" "public" {
   }
 }
 
-# --------------------------------------------------
-# Existing Private Route Table
-# --------------------------------------------------
+# Add standard tags to existing main route table
+resource "aws_ec2_tag" "public_route_table_tags" {
+  for_each = merge(
+    local.common_tags,
+    {
+      Name = var.public_route_table_name
+    }
+  )
 
-data "aws_route_table" "private" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.main.id]
-  }
-
-  filter {
-    name   = "tag:Name"
-    values = [var.private_route_table_name]
-  }
+  resource_id = data.aws_route_table.public.id
+  key         = each.key
+  value       = each.value
 }
 
 # --------------------------------------------------
-# Private Route through Existing NAT Gateway
+# Create Private Route Table
+# --------------------------------------------------
+
+resource "aws_route_table" "private" {
+  vpc_id = data.aws_vpc.main.id
+
+  tags = merge(
+    local.common_tags,
+    {
+      Name = var.private_route_table_name
+    }
+  )
+}
+
+# --------------------------------------------------
+# Public Route: Internet Gateway
+# --------------------------------------------------
+
+resource "aws_route" "public_internet" {
+  route_table_id         = data.aws_route_table.public.id
+  destination_cidr_block = "0.0.0.0/0"
+  gateway_id             = data.aws_internet_gateway.main.id
+}
+
+# --------------------------------------------------
+# Private Route: NAT Gateway
 # --------------------------------------------------
 
 resource "aws_route" "private_nat" {
-  route_table_id         = data.aws_route_table.private.id
+  route_table_id         = aws_route_table.private.id
   destination_cidr_block = "0.0.0.0/0"
   nat_gateway_id         = data.aws_nat_gateway.main.id
+}
+
+# --------------------------------------------------
+# Public Subnet Associations
+# --------------------------------------------------
+
+resource "aws_route_table_association" "public_a" {
+  subnet_id      = data.aws_subnet.public_a.id
+  route_table_id = data.aws_route_table.public.id
+}
+
+resource "aws_route_table_association" "public_b" {
+  subnet_id      = data.aws_subnet.public_b.id
+  route_table_id = data.aws_route_table.public.id
+}
+
+# --------------------------------------------------
+# Private Subnet Associations
+# --------------------------------------------------
+
+resource "aws_route_table_association" "frontend" {
+  subnet_id      = data.aws_subnet.frontend.id
+  route_table_id = aws_route_table.private.id
+}
+
+resource "aws_route_table_association" "backend" {
+  subnet_id      = data.aws_subnet.backend.id
+  route_table_id = aws_route_table.private.id
+}
+
+resource "aws_route_table_association" "database" {
+  subnet_id      = data.aws_subnet.database.id
+  route_table_id = aws_route_table.private.id
 }
 
 # --------------------------------------------------
@@ -121,26 +276,21 @@ resource "aws_route" "private_nat" {
 # --------------------------------------------------
 
 output "vpc_id" {
-  description = "Dynamically discovered VPC ID"
-  value       = data.aws_vpc.main.id
+  value = data.aws_vpc.main.id
 }
 
 output "public_route_table_id" {
-  description = "Existing main public route table ID"
-  value       = data.aws_route_table.public.id
+  value = data.aws_route_table.public.id
 }
 
 output "private_route_table_id" {
-  description = "Existing private route table ID"
-  value       = data.aws_route_table.private.id
-}
-
-output "nat_gateway_id" {
-  description = "Existing available NAT Gateway ID"
-  value       = data.aws_nat_gateway.main.id
+  value = aws_route_table.private.id
 }
 
 output "internet_gateway_id" {
-  description = "Existing Internet Gateway ID"
-  value       = data.aws_internet_gateway.main.id
+  value = data.aws_internet_gateway.main.id
+}
+
+output "nat_gateway_id" {
+  value = data.aws_nat_gateway.main.id
 }
