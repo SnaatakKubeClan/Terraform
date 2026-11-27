@@ -1,0 +1,26 @@
+
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyUnapprovedAWSServices",
+      "Effect": "Deny",
+      "NotAction": [
+        "ec2:*",
+        "elasticloadbalancing:*",
+        "autoscaling:*",
+        "s3:*",
+        "iam:*",
+        "sts:*",
+        "ssm:*",
+        "ssmmessages:*",
+        "ec2messages:*",
+        "cloudwatch:*",
+        "logs:*",
+        "route53:*",
+        "kms:*"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
